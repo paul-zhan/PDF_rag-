@@ -1,0 +1,75 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  indexer:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pdf_indexer
+    depends_on:
+      - qdrant
+    volumes:
+      - ./documents:/app/documents
+      - ./backend:/app
+    working_dir: /app
+    command: python services/indexing_pipeline.py
+    restart: "no"
+  
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gpt-oss}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'ollama serve & until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull "$$OLLAMA_MODEL"; wait'
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fastapi_backend
+    depends_on:
+      qdrant:
+        condition: service_started
+      ollama:
+        condition: service_started
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gpt-oss}
+    volumes:
+      - ./backend:/app
+    working_dir: /app
+    command: uvicorn app:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    
+
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: streamlit_frontend
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+    working_dir: /app
+    command: streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+    ports:
+      - "8501:8501"
+
+volumes:
+  qdrant_data:
+  ollama_data:

@@ -1,0 +1,17 @@
+env/
+venv/
+rag_env/
+
+documents/
+backend/documents/
+
+node_modules/
+dist/
+coverage/
+
+.vscode/
+.idea/
+.DS_Store
+
+__pycache__/
+*.py[cod]
