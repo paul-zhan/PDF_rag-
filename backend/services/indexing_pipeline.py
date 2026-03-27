@@ -1,7 +1,10 @@
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from tqdm import tqdm
 from pathlib import Path
+import os
+import time
 import torch
+import requests
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter#
 from sentence_transformers import SentenceTransformer
@@ -16,7 +19,21 @@ class IndexingPipeline():
             "BAAI/bge-base-en-v1.5",
             device="cuda" if torch.cuda.is_available() else "cpu"
         )
-        self.client = QdrantClient(url="http://qdrant:6333")
+        self.qdrant_url = os.getenv("QDRANT_URL", "http://qdrant:6333")
+        self.client = QdrantClient(url=self.qdrant_url)
+
+    def wait_for_qdrant(self, attempts=30, delay=2):
+        ready_url = f"{self.qdrant_url}/readyz"
+        for attempt in range(1, attempts + 1):
+            try:
+                response = requests.get(ready_url, timeout=3)
+                response.raise_for_status()
+                return
+            except requests.RequestException as exc:
+                if attempt == attempts:
+                    raise RuntimeError(f"Qdrant did not become ready: {exc}") from exc
+                print(f"Waiting for Qdrant ({attempt}/{attempts}): {exc}")
+                time.sleep(delay)
 
     def data_loading(self):
 
@@ -104,6 +121,7 @@ class IndexingPipeline():
         print("torch cuda:", torch.version.cuda)
         print("cuda available:", torch.cuda.is_available())
         print("gpu:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)
+        self.wait_for_qdrant()
         loaded_documents = self.data_loading()
         data_chunks = self.data_chunking(loaded_documents)
         embedding = self.embedding_generation(data_chunks)
