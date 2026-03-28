@@ -18,6 +18,6 @@ def health_check():
 def bot_answer (request: QueryRequest):
     try:
         response = pipeline.bot_answer(request.query)
-        return {"answer": response}
+        return response
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Ollama unavailable: {e}")

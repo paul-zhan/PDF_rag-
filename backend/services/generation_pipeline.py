@@ -1,8 +1,13 @@
-from qdrant_client import QdrantClient
-import torch
+from datetime import datetime, timezone
+import json
 import os
-import requests
 import time
+import uuid
+from pathlib import Path
+
+import requests
+import torch
+from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 from langchain_community.llms import Ollama
 
@@ -12,6 +17,10 @@ class GenerationPipeline():
         self.ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss")
         self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
         self.qdrant_url = os.getenv("QDRANT_URL", "http://qdrant:6333")
+        self.trace_log_path = Path(
+            os.getenv("EVAL_TRACE_PATH", "/app/evaluation_logs/rag_traces.jsonl")
+        )
+        self.prompt_version = os.getenv("PROMPT_VERSION", "v1")
         self.llm = Ollama(
             model=self.ollama_model,
             base_url=self.ollama_base_url
@@ -95,16 +104,47 @@ class GenerationPipeline():
         response = self.llm.invoke(augmented_prompt)
 
         print(f"Answer: {response}")
-        
+
+    def _build_trace(self, query, answer, retrieval_results):
+        contexts = [chunk.get("text", "") for chunk in retrieval_results if chunk.get("text")]
+        sources = [
+            {
+                "source": chunk.get("source", ""),
+                "page": chunk.get("page", 0),
+                "score": chunk.get("score"),
+            }
+            for chunk in retrieval_results
+        ]
+        return {
+            "trace_id": str(uuid.uuid4()),
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "query": query,
+            "answer": answer,
+            "contexts": contexts,
+            "sources": sources,
+            "ollama_model": self.ollama_model,
+            "prompt_version": self.prompt_version,
+        }
+
+    def _write_trace(self, trace):
+        self.trace_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.trace_log_path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(trace, ensure_ascii=True) + "\n")
+
     def bot_answer(self, query: str):
         self.ensure_qdrant_ready()
         self.ensure_model_ready()
+
         retrieval_results = self.retrieval(query)
         augmented_prompt = self.augmentation(query, retrieval_results)
-
         response = self.llm.invoke(augmented_prompt)
+        
+        trace = self._build_trace(query, answer=response, retrieval_results=retrieval_results)
+        self._write_trace(trace)
+        return {
+            "answer": response,
+            "trace_id": trace["trace_id"],
+        }
 
-        return response
     def main(self):
         self.bot_answer("Tell me about llm")
-

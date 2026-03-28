@@ -10,6 +10,7 @@ The project uses:
 - `FastAPI` for the backend API
 - `Streamlit` for the frontend UI
 - `Docker Compose` to run the full stack
+- `ragas` for offline evaluation of logged RAG traces
 
 ## Architecture
 
@@ -36,6 +37,8 @@ The application is split into four services:
 3. The backend embeds the query and retrieves the top matching chunks from Qdrant.
 4. The retrieved context is injected into a prompt.
 5. Ollama generates the final answer.
+6. The backend returns the answer and a `trace_id`.
+7. The backend logs a structured evaluation trace for offline scoring.
 
 ## Project Structure
 
@@ -130,9 +133,15 @@ Response body:
 
 ```json
 {
-  "answer": "..."
+  "answer": "...",
+  "trace_id": "..."
 }
 ```
+
+Notes:
+
+- The live API does not return `ragas` metrics.
+- `trace_id` is used to correlate a response with a logged evaluation trace.
 
 Backend base URL:
 
@@ -147,6 +156,8 @@ The project reads the following environment variables:
 - `QDRANT_URL`: defaults to `http://qdrant:6333`
 - `OLLAMA_BASE_URL`: defaults to `http://ollama:11434`
 - `OLLAMA_MODEL`: defaults to `gpt-oss`
+- `EVAL_TRACE_PATH`: defaults to `/app/evaluation_logs/rag_traces.jsonl`
+- `PROMPT_VERSION`: defaults to `v1`
 
 You can override `OLLAMA_MODEL` when starting Docker Compose, for example:
 
@@ -171,6 +182,7 @@ Main files:
 - `backend/app.py`
 - `backend/services/indexing_pipeline.py`
 - `backend/services/generation_pipeline.py`
+- `backend/services/evaluate_traces.py`
 
 ### Frontend
 
@@ -184,6 +196,38 @@ Main file:
 - There is no document management UI yet.
 - There are no automated tests in the current repository.
 - The retrieval prompt currently passes raw retrieved chunk data directly into the LLM prompt without extra citation formatting.
+- `ragas` evaluation is designed as an offline batch step; `context_precision` is only computed when traces include a reference answer.
+
+## Offline Evaluation
+
+The backend now logs each request to `backend/evaluation_logs/rag_traces.jsonl` inside the mounted backend volume.
+
+This keeps the API path fast and makes evaluation reproducible.
+The online request flow only writes traces; it does not run `ragas` during `/chatbot_answer`.
+
+To score logged traces with `ragas`, run from the backend container or backend working directory:
+
+```bash
+python services/evaluate_traces.py --trace-path /app/evaluation_logs/rag_traces.jsonl
+```
+
+Optional:
+
+- `--limit 50` to evaluate only the first 50 traces
+
+The evaluator always runs `faithfulness` and `answer_relevancy`.
+It adds `context_precision` only when every evaluated trace includes a reference answer.
+
+Each trace currently includes:
+
+- `trace_id`
+- `timestamp_utc`
+- `query`
+- `answer`
+- `contexts`
+- `sources`
+- `ollama_model`
+- `prompt_version`
 
 ## Future Improvements
 

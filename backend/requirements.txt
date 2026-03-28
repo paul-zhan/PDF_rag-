@@ -5,6 +5,7 @@ langchain-text-splitters
 pydantic
 pypdf
 qdrant-client
+ragas
 requests
 sentence-transformers
 torch
